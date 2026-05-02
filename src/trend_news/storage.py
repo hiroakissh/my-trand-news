@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Mapping
 
-from .models import DailyDigest, NewsItem, TopicDigest
+from .config import AppConfig, TopicConfig
+from .models import DailyDigest, NewsItem, TopicDigest, TopicInsight
 
 
 def prepare_run_dir(output_dir: Path, run_date: str) -> Path:
@@ -62,6 +64,44 @@ def write_summary(digest: DailyDigest) -> Path:
     return path
 
 
+def load_daily_digest_from_manifest(
+    *,
+    config: AppConfig,
+    run_dir: Path,
+    insights: Mapping[str, TopicInsight] | None = None,
+) -> DailyDigest:
+    manifest_path = run_dir / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    topic_configs = {topic.id: topic for topic in config.topics}
+    insight_map = insights or {}
+
+    topics: list[TopicDigest] = []
+    for raw_topic in payload.get("topics", []):
+        topic_id = str(raw_topic.get("id", "")).strip()
+        topic_config = topic_configs.get(topic_id) or TopicConfig(
+            id=topic_id,
+            title=str(raw_topic.get("title") or topic_id),
+            queries=(),
+            feeds=(),
+            max_items=None,
+        )
+        topics.append(
+            TopicDigest(
+                topic=topic_config,
+                items=tuple(_item_from_payload(item) for item in raw_topic.get("items", [])),
+                errors=tuple(str(error) for error in raw_topic.get("errors", [])),
+                insight=insight_map.get(topic_id),
+            )
+        )
+
+    return DailyDigest(
+        run_date=date.fromisoformat(str(payload["run_date"])),
+        generated_at=datetime.fromisoformat(str(payload["generated_at"])),
+        topics=tuple(topics),
+        output_dir=run_dir,
+    )
+
+
 def cleanup_old_runs(output_dir: Path, keep_days: int, now: datetime) -> None:
     if not output_dir.exists():
         return
@@ -95,3 +135,14 @@ def _item_payload(item: NewsItem) -> dict[str, object]:
         "summary": item.summary,
         "published_at": item.published_at.isoformat() if item.published_at else None,
     }
+
+
+def _item_from_payload(payload: dict[str, object]) -> NewsItem:
+    published_at = payload.get("published_at")
+    return NewsItem(
+        title=str(payload.get("title") or ""),
+        url=str(payload.get("url") or ""),
+        source=str(payload.get("source") or ""),
+        summary=str(payload.get("summary") or ""),
+        published_at=datetime.fromisoformat(str(published_at)) if published_at else None,
+    )

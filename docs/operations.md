@@ -18,6 +18,8 @@
 - `data/gmail_token.json`: locally generated OAuth access/refresh token. Never commit it.
 - `scripts/run_daily.sh`: automation entrypoint.
 - `scripts/run_daily_and_push.sh`: automation entrypoint that mails the digest, commits generated PDFs, and pushes them.
+- `scripts/prepare_daily_for_codex_summary.sh`: creates the daily manifest without sending email, so Codex can summarize article content.
+- `scripts/render_daily_with_summary_and_push.sh`: embeds `codex_summary.json` into PDFs, sends them, commits generated PDFs, and pushes them.
 
 ## Failure Handling
 
@@ -53,6 +55,12 @@ If generated PDFs should be pushed to GitHub after delivery, run:
 
 ```text
 Run ./scripts/run_daily_and_push.sh and report whether the daily news PDFs were generated, mailed, committed, and pushed successfully.
+```
+
+For Codex-generated summaries embedded in the PDFs, use this two-step flow in the automation:
+
+```text
+Run ./scripts/prepare_daily_for_codex_summary.sh. Read the printed RUN_DATE and output/daily/RUN_DATE/manifest.json. Fetch article pages when possible, then write output/daily/RUN_DATE/codex_summary.json using the schema documented in README.md. Run ./scripts/render_daily_with_summary_and_push.sh RUN_DATE and report whether summarized PDFs were mailed, committed, and pushed.
 ```
 
 Before activating the 8:00 automation, run this once:

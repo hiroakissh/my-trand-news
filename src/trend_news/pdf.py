@@ -12,7 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from .models import NewsItem, TopicDigest
+from .models import NewsItem, TopicDigest, TopicInsight
 
 
 BODY_FONT = "HeiseiKakuGo-W5"
@@ -47,6 +47,9 @@ def generate_topic_pdf(digest: TopicDigest, path: Path, generated_at: datetime) 
         for error in digest.errors:
             story.append(Paragraph(escape(error), styles["WarningJP"]))
         story.append(Spacer(1, 8))
+
+    if digest.insight:
+        story.extend(_insight_story(digest.insight, styles))
 
     if not digest.items:
         story.append(Paragraph("対象期間内のニュースは見つかりませんでした。", styles["BodyJP"]))
@@ -111,6 +114,16 @@ def _styles() -> dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#555555"),
             wordWrap="CJK",
         ),
+        "InsightLabelJP": ParagraphStyle(
+            "InsightLabelJP",
+            parent=base["BodyText"],
+            fontName=BODY_FONT,
+            fontSize=9,
+            leading=13,
+            textColor=colors.HexColor("#1f4f67"),
+            wordWrap="CJK",
+            spaceBefore=4,
+        ),
         "UrlJP": ParagraphStyle(
             "UrlJP",
             parent=base["BodyText"],
@@ -130,6 +143,40 @@ def _styles() -> dict[str, ParagraphStyle]:
             wordWrap="CJK",
         ),
     }
+
+
+def _insight_story(
+    insight: TopicInsight,
+    styles: dict[str, ParagraphStyle],
+) -> list[object]:
+    story: list[object] = [
+        Paragraph("Codex要約", styles["SectionJP"]),
+    ]
+    if insight.summary:
+        story.append(Paragraph("要約", styles["InsightLabelJP"]))
+        story.append(Paragraph(escape(insight.summary), styles["BodyJP"]))
+    if insight.key_points:
+        story.append(Paragraph("重要ポイント", styles["InsightLabelJP"]))
+        for point in insight.key_points:
+            story.append(Paragraph(f"・{escape(point)}", styles["BodyJP"]))
+    if insight.background:
+        story.append(Paragraph("背景", styles["InsightLabelJP"]))
+        story.append(Paragraph(escape(insight.background), styles["BodyJP"]))
+    if insight.personal_takeaway:
+        story.append(Paragraph("自分向け示唆", styles["InsightLabelJP"]))
+        story.append(Paragraph(escape(insight.personal_takeaway), styles["BodyJP"]))
+    if insight.sources:
+        story.append(Paragraph("参照した主な記事", styles["InsightLabelJP"]))
+        for source in insight.sources[:5]:
+            if source.title and source.url:
+                story.append(
+                    Paragraph(
+                        f"・{escape(source.title)} - {escape(source.url)}",
+                        styles["MetaJP"],
+                    )
+                )
+    story.append(Spacer(1, 10))
+    return story
 
 
 def _item_story(

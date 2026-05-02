@@ -72,3 +72,37 @@ Run ./scripts/run_daily_and_push.sh and report whether the daily news PDFs were 
 
 `scripts/run_daily.sh` と `scripts/run_daily_and_push.sh` は `.venv` があれば自動で有効化します。
 OAuthクライアントJSON、OAuthトークン、`.env`、ログはGit管理外のままです。
+
+## Codex要約をPDFに埋め込む運用
+
+OpenAI APIキーを使わず、Codexオートメーション側で要約を作ってPDFへ埋め込む場合は2段階で実行します。
+
+```bash
+./scripts/prepare_daily_for_codex_summary.sh
+```
+
+このコマンドで `output/daily/YYYY-MM-DD/manifest.json` を作成します。Codexオートメーションが記事本文を確認し、次の形式で `output/daily/YYYY-MM-DD/codex_summary.json` を作成します。
+
+```json
+{
+  "run_date": "YYYY-MM-DD",
+  "topics": [
+    {
+      "topic_id": "swift",
+      "summary": "分野全体の要約",
+      "key_points": ["重要ポイント1", "重要ポイント2"],
+      "background": "背景",
+      "personal_takeaway": "自分向け示唆",
+      "sources": [
+        {"title": "記事タイトル", "url": "https://example.com"}
+      ]
+    }
+  ]
+}
+```
+
+その後、要約入りPDFを再生成してGmail送信とPDF pushを行います。
+
+```bash
+./scripts/render_daily_with_summary_and_push.sh YYYY-MM-DD
+```

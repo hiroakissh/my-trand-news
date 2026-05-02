@@ -4,13 +4,16 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import replace
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from .config import load_config
 from .feeds import collect_topic_digests
+from .insights import load_topic_insights
 from .logging_config import setup_logging
 from .mailer import (
     authorize_gmail,
@@ -20,7 +23,14 @@ from .mailer import (
 )
 from .models import DailyDigest
 from .pdf import generate_topic_pdf
-from .storage import cleanup_old_runs, prepare_run_dir, safe_filename, write_manifest, write_summary
+from .storage import (
+    cleanup_old_runs,
+    load_daily_digest_from_manifest,
+    prepare_run_dir,
+    safe_filename,
+    write_manifest,
+    write_summary,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
             return run(args)
         if args.command == "auth-gmail":
             return auth_gmail(args)
+        if args.command == "render-from-manifest":
+            return render_from_manifest(args)
     except RuntimeError as exc:
         if logging.getLogger().handlers:
             LOGGER.error("%s", exc)
@@ -54,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--dry-run", action="store_true", help="Generate files but do not email.")
     run_parser.add_argument("--no-email", action="store_true", help="Generate files without email.")
     run_parser.add_argument(
+        "--summary-file",
+        help="Optional Codex-generated JSON summary to embed in PDFs.",
+    )
+    run_parser.add_argument(
         "--log-level",
         default=os.getenv("NEWS_LOG_LEVEL", "INFO"),
         help="Python logging level.",
@@ -64,6 +80,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create or refresh the Gmail OAuth token for scheduled sends.",
     )
     auth_parser.add_argument(
+        "--log-level",
+        default=os.getenv("NEWS_LOG_LEVEL", "INFO"),
+        help="Python logging level.",
+    )
+
+    render_parser = subparsers.add_parser(
+        "render-from-manifest",
+        help="Regenerate PDFs from a manifest, optionally embedding a Codex summary.",
+    )
+    render_parser.add_argument("--config", default="config/topics.yml", help="Path to YAML config.")
+    render_parser.add_argument("--date", required=True, help="Run date as YYYY-MM-DD.")
+    render_parser.add_argument(
+        "--summary-file",
+        required=True,
+        help="Codex-generated JSON summary to embed in PDFs.",
+    )
+    render_parser.add_argument("--email", action="store_true", help="Send the rendered PDFs.")
+    render_parser.add_argument("--no-email", action="store_true", help="Render without email.")
+    render_parser.add_argument(
         "--log-level",
         default=os.getenv("NEWS_LOG_LEVEL", "INFO"),
         help="Python logging level.",
@@ -82,7 +117,11 @@ def run(args: argparse.Namespace) -> int:
     run_dir = prepare_run_dir(config.output_dir, run_date.isoformat())
 
     LOGGER.info("Starting daily news run for %s", run_date.isoformat())
-    topic_digests = collect_topic_digests(config, now)
+    insights = load_topic_insights(args.summary_file)
+    topic_digests = tuple(
+        replace(topic_digest, insight=insights.get(topic_digest.topic.id))
+        for topic_digest in collect_topic_digests(config, now)
+    )
     digest = DailyDigest(
         run_date=run_date,
         generated_at=now,
@@ -90,11 +129,7 @@ def run(args: argparse.Namespace) -> int:
         output_dir=run_dir,
     )
 
-    pdf_paths: list[Path] = []
-    for topic_digest in digest.topics:
-        filename = f"{safe_filename(topic_digest.topic.id)}.pdf"
-        pdf_paths.append(generate_topic_pdf(topic_digest, run_dir / filename, now))
-
+    pdf_paths = render_digest_pdfs(digest)
     manifest_path = write_manifest(digest)
     summary_path = write_summary(digest)
     cleanup_old_runs(config.output_dir, config.keep_days, now)
@@ -108,19 +143,7 @@ def run(args: argparse.Namespace) -> int:
         LOGGER.info("Dry run enabled; skipping email delivery.")
         return 0
 
-    settings = load_gmail_oauth_settings_from_env()
-    subject = f"{config.mail.subject_prefix} {run_date.isoformat()}"
-    message_id = send_digest_email(
-        settings=settings,
-        subject=subject,
-        body=build_email_body(digest),
-        attachments=tuple(pdf_paths),
-    )
-    LOGGER.info(
-        "Sent digest email to %s via Gmail API message_id=%s",
-        ", ".join(settings.mail_to),
-        message_id,
-    )
+    send_daily_digest_email(config.mail.subject_prefix, digest, tuple(pdf_paths))
     return 0
 
 
@@ -131,6 +154,70 @@ def auth_gmail(args: argparse.Namespace) -> int:
     token_path = authorize_gmail(settings)
     LOGGER.info("Gmail OAuth token saved to %s", token_path)
     return 0
+
+
+def render_from_manifest(args: argparse.Namespace) -> int:
+    load_dotenv()
+    setup_logging(args.log_level)
+
+    if args.email and args.no_email:
+        raise RuntimeError("Use either --email or --no-email, not both.")
+
+    config = load_config(args.config)
+    run_date = date.fromisoformat(args.date)
+    run_dir = config.output_dir / run_date.isoformat()
+    insights = load_topic_insights(args.summary_file)
+    digest = load_daily_digest_from_manifest(
+        config=config,
+        run_dir=run_dir,
+        insights=insights,
+    )
+    pdf_paths = render_digest_pdfs(digest)
+    summary_path = write_summary(digest)
+
+    LOGGER.info("Rendered %s PDFs from %s", len(pdf_paths), run_dir / "manifest.json")
+    LOGGER.info("Wrote summary: %s", summary_path)
+
+    should_email = args.email and not args.no_email
+    if should_email:
+        send_daily_digest_email(config.mail.subject_prefix, digest, tuple(pdf_paths))
+    else:
+        LOGGER.info("Email disabled for render-from-manifest.")
+    return 0
+
+
+def render_digest_pdfs(digest: DailyDigest) -> list[Path]:
+    pdf_paths: list[Path] = []
+    for topic_digest in digest.topics:
+        filename = f"{safe_filename(topic_digest.topic.id)}.pdf"
+        pdf_paths.append(
+            generate_topic_pdf(
+                topic_digest,
+                digest.output_dir / filename,
+                digest.generated_at,
+            )
+        )
+    return pdf_paths
+
+
+def send_daily_digest_email(
+    subject_prefix: str,
+    digest: DailyDigest,
+    attachments: tuple[Path, ...],
+) -> None:
+    settings = load_gmail_oauth_settings_from_env()
+    subject = f"{subject_prefix} {digest.run_date.isoformat()}"
+    message_id = send_digest_email(
+        settings=settings,
+        subject=subject,
+        body=build_email_body(digest),
+        attachments=attachments,
+    )
+    LOGGER.info(
+        "Sent digest email to %s via Gmail API message_id=%s",
+        ", ".join(settings.mail_to),
+        message_id,
+    )
 
 
 def _env_flag(name: str) -> bool:

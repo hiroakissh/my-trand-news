@@ -8,6 +8,22 @@ from .config import TopicConfig
 
 
 @dataclass(frozen=True)
+class SourceReference:
+    title: str
+    url: str
+
+
+@dataclass(frozen=True)
+class TopicInsight:
+    topic_id: str
+    summary: str
+    key_points: tuple[str, ...]
+    background: str
+    personal_takeaway: str
+    sources: tuple[SourceReference, ...] = ()
+
+
+@dataclass(frozen=True)
 class NewsItem:
     title: str
     url: str
@@ -21,6 +37,7 @@ class TopicDigest:
     topic: TopicConfig
     items: tuple[NewsItem, ...]
     errors: tuple[str, ...] = ()
+    insight: TopicInsight | None = None
 
 
 @dataclass(frozen=True)
