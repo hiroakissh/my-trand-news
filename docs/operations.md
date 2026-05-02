@@ -17,6 +17,7 @@
 - `secrets/gmail_oauth_client.json`: Google Cloud Desktop OAuth client JSON. Never commit it.
 - `data/gmail_token.json`: locally generated OAuth access/refresh token. Never commit it.
 - `scripts/run_daily.sh`: automation entrypoint.
+- `scripts/run_daily_and_push.sh`: automation entrypoint that mails the digest, commits generated PDFs, and pushes them.
 
 ## Failure Handling
 
@@ -46,6 +47,12 @@ Use this project directory as the automation workspace and run:
 
 ```text
 Run ./scripts/run_daily.sh and report whether the daily news PDFs were generated and mailed successfully.
+```
+
+If generated PDFs should be pushed to GitHub after delivery, run:
+
+```text
+Run ./scripts/run_daily_and_push.sh and report whether the daily news PDFs were generated, mailed, committed, and pushed successfully.
 ```
 
 Before activating the 8:00 automation, run this once:
