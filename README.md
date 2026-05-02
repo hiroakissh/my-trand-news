@@ -1,6 +1,6 @@
 # My Trend News
 
-分野ごとにニュース/RSSを取得し、日次PDFとして保存して、Gmail SMTPで自分宛に送信する自動実行向けプロジェクトです。
+分野ごとにニュース/RSSを取得し、日次PDFとして保存して、Gmail APIで自分宛に送信する自動実行向けプロジェクトです。
 
 ## セットアップ
 
@@ -11,7 +11,24 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-`.env` に Gmail のアプリパスワードを設定してください。通常のGoogleログインパスワードでは送信できません。
+## Gmail API OAuth
+
+Google CloudでGmail APIを有効化し、OAuthクライアントを作成します。
+
+1. Google Cloud ConsoleでGmail APIを有効化します。
+2. OAuth同意画面を設定します。
+3. OAuthクライアントIDを `Desktop app` として作成します。
+4. ダウンロードしたJSONを `secrets/gmail_oauth_client.json` に保存します。
+5. `.env` の `NEWS_MAIL_TO` と `NEWS_MAIL_FROM` を設定します。
+
+初回だけブラウザで認可します。
+
+```bash
+python -m trend_news auth-gmail
+```
+
+成功すると `data/gmail_token.json` が作成されます。このトークンはコミットしません。
+使用スコープは送信専用の `https://www.googleapis.com/auth/gmail.send` です。
 
 ## 分野の編集
 

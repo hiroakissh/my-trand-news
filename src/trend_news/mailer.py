@@ -1,30 +1,44 @@
 from __future__ import annotations
 
+import base64
 import os
-import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
 from .models import DailyDigest
 
 
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_SCOPES = (GMAIL_SEND_SCOPE,)
+
+
 @dataclass(frozen=True)
-class SmtpSettings:
-    host: str
-    port: int
-    username: str
-    password: str
+class GmailOAuthSettings:
+    credentials_file: Path
+    token_file: Path
     mail_from: str
     mail_to: tuple[str, ...]
 
 
-def load_smtp_settings_from_env() -> SmtpSettings:
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USER") or os.getenv("NEWS_MAIL_FROM") or ""
-    password = os.getenv("SMTP_PASSWORD") or os.getenv("GMAIL_APP_PASSWORD") or ""
-    mail_from = os.getenv("NEWS_MAIL_FROM") or username
+def load_gmail_oauth_settings_from_env(*, require_mail: bool = True) -> GmailOAuthSettings:
+    credentials_file = Path(
+        os.getenv("GMAIL_OAUTH_CREDENTIALS_FILE")
+        or os.getenv("GMAIL_CREDENTIALS_FILE")
+        or "secrets/gmail_oauth_client.json"
+    )
+    token_file = Path(
+        os.getenv("GMAIL_OAUTH_TOKEN_FILE")
+        or os.getenv("GMAIL_TOKEN_FILE")
+        or "data/gmail_token.json"
+    )
+    mail_from = os.getenv("NEWS_MAIL_FROM", "").strip()
     mail_to = tuple(
         address.strip()
         for address in os.getenv("NEWS_MAIL_TO", "").split(",")
@@ -32,22 +46,16 @@ def load_smtp_settings_from_env() -> SmtpSettings:
     )
 
     missing = []
-    if not username:
-        missing.append("SMTP_USER or NEWS_MAIL_FROM")
-    if not password:
-        missing.append("SMTP_PASSWORD")
-    if not mail_from:
+    if require_mail and not mail_from:
         missing.append("NEWS_MAIL_FROM")
-    if not mail_to:
+    if require_mail and not mail_to:
         missing.append("NEWS_MAIL_TO")
     if missing:
         raise RuntimeError(f"Missing mail settings: {', '.join(missing)}")
 
-    return SmtpSettings(
-        host=host,
-        port=port,
-        username=username,
-        password=password,
+    return GmailOAuthSettings(
+        credentials_file=credentials_file,
+        token_file=token_file,
         mail_from=mail_from,
         mail_to=mail_to,
     )
@@ -71,11 +79,92 @@ def build_email_body(digest: DailyDigest) -> str:
 
 def send_digest_email(
     *,
-    settings: SmtpSettings,
+    settings: GmailOAuthSettings,
     subject: str,
     body: str,
     attachments: tuple[Path, ...],
-) -> None:
+) -> str:
+    credentials = load_gmail_credentials(settings, interactive=False)
+    message = build_mime_message(
+        settings=settings,
+        subject=subject,
+        body=body,
+        attachments=attachments,
+    )
+    raw_message = encode_message(message)
+
+    service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
+    response = (
+        service.users()
+        .messages()
+        .send(userId="me", body={"raw": raw_message})
+        .execute()
+    )
+    return str(response.get("id", ""))
+
+
+def authorize_gmail(settings: GmailOAuthSettings) -> Path:
+    load_gmail_credentials(settings, interactive=True)
+    return settings.token_file
+
+
+def load_gmail_credentials(
+    settings: GmailOAuthSettings,
+    *,
+    interactive: bool,
+) -> Credentials:
+    credentials = None
+    if settings.token_file.exists():
+        credentials = Credentials.from_authorized_user_file(
+            str(settings.token_file),
+            list(GMAIL_SCOPES),
+        )
+
+    if credentials and credentials.valid:
+        return credentials
+
+    if credentials and credentials.expired and credentials.refresh_token:
+        try:
+            credentials.refresh(Request())
+        except RefreshError as exc:
+            if not interactive:
+                raise RuntimeError(
+                    "Gmail OAuth token could not be refreshed. "
+                    "Run `python -m trend_news auth-gmail` again."
+                ) from exc
+        else:
+            _write_credentials(settings.token_file, credentials)
+            return credentials
+
+    if not interactive:
+        raise RuntimeError(
+            "Gmail OAuth token is missing or invalid. "
+            "Run `python -m trend_news auth-gmail` once before scheduled runs."
+        )
+
+    if not settings.credentials_file.exists():
+        raise RuntimeError(
+            "Gmail OAuth client file is missing: "
+            f"{settings.credentials_file}. Download a Desktop OAuth client JSON "
+            "from Google Cloud and set GMAIL_OAUTH_CREDENTIALS_FILE if needed."
+        )
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(settings.credentials_file),
+        list(GMAIL_SCOPES),
+    )
+    credentials = flow.run_local_server(port=0)
+    _write_credentials(settings.token_file, credentials)
+    return credentials
+
+
+def build_mime_message(
+    *,
+    settings: GmailOAuthSettings,
+    subject: str,
+    body: str,
+    attachments: tuple[Path, ...],
+) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = settings.mail_from
@@ -90,7 +179,13 @@ def send_digest_email(
             filename=attachment.name,
         )
 
-    with smtplib.SMTP(settings.host, settings.port, timeout=30) as smtp:
-        smtp.starttls()
-        smtp.login(settings.username, settings.password)
-        smtp.send_message(message)
+    return message
+
+
+def encode_message(message: EmailMessage) -> str:
+    return base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+
+
+def _write_credentials(path: Path, credentials: Credentials) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(credentials.to_json(), encoding="utf-8")

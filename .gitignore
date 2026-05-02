@@ -1,5 +1,10 @@
 .env
 .venv/
+secrets/
+credentials.json
+token.json
+client_secret*.json
+gmail_oauth_client.json
 __pycache__/
 *.py[cod]
 .pytest_cache/

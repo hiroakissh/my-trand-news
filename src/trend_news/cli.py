@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from datetime import date, datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -12,7 +12,12 @@ from dotenv import load_dotenv
 from .config import load_config
 from .feeds import collect_topic_digests
 from .logging_config import setup_logging
-from .mailer import build_email_body, load_smtp_settings_from_env, send_digest_email
+from .mailer import (
+    authorize_gmail,
+    build_email_body,
+    load_gmail_oauth_settings_from_env,
+    send_digest_email,
+)
 from .models import DailyDigest
 from .pdf import generate_topic_pdf
 from .storage import cleanup_old_runs, prepare_run_dir, safe_filename, write_manifest, write_summary
@@ -24,8 +29,17 @@ LOGGER = logging.getLogger(__name__)
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "run":
-        return run(args)
+    try:
+        if args.command == "run":
+            return run(args)
+        if args.command == "auth-gmail":
+            return auth_gmail(args)
+    except RuntimeError as exc:
+        if logging.getLogger().handlers:
+            LOGGER.error("%s", exc)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1
     parser.print_help()
     return 2
 
@@ -40,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--dry-run", action="store_true", help="Generate files but do not email.")
     run_parser.add_argument("--no-email", action="store_true", help="Generate files without email.")
     run_parser.add_argument(
+        "--log-level",
+        default=os.getenv("NEWS_LOG_LEVEL", "INFO"),
+        help="Python logging level.",
+    )
+
+    auth_parser = subparsers.add_parser(
+        "auth-gmail",
+        help="Create or refresh the Gmail OAuth token for scheduled sends.",
+    )
+    auth_parser.add_argument(
         "--log-level",
         default=os.getenv("NEWS_LOG_LEVEL", "INFO"),
         help="Python logging level.",
@@ -84,15 +108,28 @@ def run(args: argparse.Namespace) -> int:
         LOGGER.info("Dry run enabled; skipping email delivery.")
         return 0
 
-    settings = load_smtp_settings_from_env()
+    settings = load_gmail_oauth_settings_from_env()
     subject = f"{config.mail.subject_prefix} {run_date.isoformat()}"
-    send_digest_email(
+    message_id = send_digest_email(
         settings=settings,
         subject=subject,
         body=build_email_body(digest),
         attachments=tuple(pdf_paths),
     )
-    LOGGER.info("Sent digest email to %s", ", ".join(settings.mail_to))
+    LOGGER.info(
+        "Sent digest email to %s via Gmail API message_id=%s",
+        ", ".join(settings.mail_to),
+        message_id,
+    )
+    return 0
+
+
+def auth_gmail(args: argparse.Namespace) -> int:
+    load_dotenv()
+    setup_logging(args.log_level)
+    settings = load_gmail_oauth_settings_from_env(require_mail=False)
+    token_path = authorize_gmail(settings)
+    LOGGER.info("Gmail OAuth token saved to %s", token_path)
     return 0
 
 
