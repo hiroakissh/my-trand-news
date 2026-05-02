@@ -1,0 +1,115 @@
+timezone: Asia/Tokyo
+lookback_hours: 168
+max_items_per_topic: 8
+include_undated: true
+output_dir: output/daily
+keep_days: 30
+
+google_news:
+  enabled: true
+  language: ja
+  country: JP
+  ceid: JP:ja
+  lookback_query: when:7d
+
+mail:
+  subject_prefix: Daily Trend News
+
+topics:
+  - id: swift
+    title: Swift
+    queries:
+      - Swift iOS 開発
+      - SwiftUI Xcode
+      - Swift programming Apple
+    feeds:
+      - name: Swift.org
+        url: https://www.swift.org/atom.xml
+      - name: Swift Forums Evolution
+        url: https://forums.swift.org/c/evolution/18.rss
+      - name: Swift GitHub Releases
+        url: https://github.com/swiftlang/swift/releases.atom
+    max_items: 10
+
+  - id: ios
+    title: iOS
+    queries:
+      - iOS 最新 アップデート
+      - iPhone iOS アプリ 開発
+      - Apple iOS developer
+    feeds:
+      - name: Apple Developer News
+        url: https://developer.apple.com/news/rss/news.rss
+    max_items: 8
+
+  - id: android
+    title: Android
+    queries:
+      - Android 最新 アップデート
+      - Android アプリ 開発
+      - Google Android developer
+    feeds:
+      - name: Android Developers Blog
+        url: https://android-developers.googleblog.com/feeds/posts/default?alt=rss
+    max_items: 8
+
+  - id: flutter
+    title: Flutter
+    queries:
+      - Flutter 最新
+      - Flutter アプリ 開発
+      - Dart Flutter developer
+    feeds:
+      - name: Flutter Blog
+        url: https://medium.com/feed/flutter
+      - name: Flutter GitHub Releases
+        url: https://github.com/flutter/flutter/releases.atom
+    max_items: 8
+
+  - id: world_affairs
+    title: 世界情勢
+    queries:
+      - 世界情勢 最新
+      - 国際情勢 地政学
+      - international affairs geopolitics
+    max_items: 8
+
+  - id: japan_affairs
+    title: 日本情勢
+    queries:
+      - 日本情勢 最新
+      - 日本 政治 経済 社会
+      - 国内情勢 政策
+    max_items: 8
+
+  - id: football
+    title: サッカーニュース
+    queries:
+      - サッカー ニュース
+      - Jリーグ 海外サッカー
+      - 日本代表 サッカー
+    max_items: 8
+
+  - id: occult
+    title: オカルト・都市伝説
+    queries:
+      - オカルト 都市伝説
+      - UFO 心霊 超常現象
+      - 未確認生物 ミステリー
+    max_items: 8
+
+  - id: photo_articles
+    title: おすすめ写真記事
+    queries:
+      - 写真記事 おすすめ
+      - 写真特集 ニュース
+      - フォトギャラリー 話題
+    max_items: 8
+
+  - id: random_trends
+    title: 上記以外のランダムトレンド
+    queries:
+      - 話題 トレンド ニュース
+      - 急上昇 注目 ニュース
+      - SNS 話題 最新
+    max_items: 8
